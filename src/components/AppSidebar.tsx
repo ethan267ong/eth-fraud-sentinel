@@ -37,8 +37,8 @@ export function AppSidebar() {
   const isActive = (path: string) => currentPath === path;
   const getNavCls = ({ isActive }: { isActive: boolean }) =>
     isActive 
-      ? "bg-primary text-primary-foreground font-medium shadow-md" 
-      : "hover:bg-muted/80 text-foreground/80 hover:text-foreground transition-smooth";
+      ? "bg-primary text-white font-medium shadow-md"
+      : "hover:bg-muted text-gray-700 hover:text-black transition-colors";
 
   return (
     <Sidebar
@@ -72,7 +72,7 @@ export function AppSidebar() {
                     <NavLink 
                       to={item.url} 
                       end 
-                      className={getNavCls}
+                      className={({ isActive }) => getNavCls({ isActive })}
                     >
                       <item.icon className="w-5 h-5 mr-3" />
                       {!collapsed && <span className="text-sm">{item.title}</span>}
