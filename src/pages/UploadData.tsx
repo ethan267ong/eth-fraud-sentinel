@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -9,11 +9,22 @@ import { Upload, FileText, CheckCircle, AlertCircle, Database, Play } from "luci
 const UploadData = () => {
   const { toast } = useToast();
   const [dragActive, setDragActive] = useState(false);
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [transactionsFile, setTransactionsFile] = useState<File | null>(null);
+  const [featuresFile, setFeaturesFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [preprocessing, setPreprocessing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [previewData, setPreviewData] = useState<any[]>([]);
+  const [metrics, setMetrics] = useState<any | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('selectedModel') || 'xgboost');
+
+  useEffect(() => {
+    const syncModel = () => setSelectedModel(localStorage.getItem('selectedModel') || 'xgboost');
+    window.addEventListener('storage', syncModel);
+    // also sync on mount
+    syncModel();
+    return () => window.removeEventListener('storage', syncModel);
+  }, []);
 
   // Mock preview data
   const mockPreviewData = [
@@ -42,8 +53,14 @@ const UploadData = () => {
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
       if (file.type === "text/csv" || file.name.endsWith('.csv')) {
-        setUploadedFile(file);
-        simulateUpload(file);
+        // If transactions not set, fill it; else set features
+        if (!transactionsFile) {
+          setTransactionsFile(file);
+          simulateUpload(file);
+        } else {
+          setFeaturesFile(file);
+          simulateUpload(file);
+        }
       } else {
         toast({
           title: "Invalid file type",
@@ -52,12 +69,19 @@ const UploadData = () => {
         });
       }
     }
-  }, [toast]);
+  }, [toast, transactionsFile]);
 
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileInputTx = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      setUploadedFile(file);
+      setTransactionsFile(file);
+      simulateUpload(file);
+    }
+  };
+  const handleFileInputFeat = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setFeaturesFile(file);
       simulateUpload(file);
     }
   };
@@ -95,6 +119,33 @@ const UploadData = () => {
     }, 3000);
   };
 
+  const handleTrain = async () => {
+    if (!transactionsFile || !featuresFile) {
+      toast({ title: "Missing files", description: "Please upload both Transactions and Features CSVs", variant: "destructive" });
+      return;
+    }
+    try {
+      setPreprocessing(true);
+      setMetrics(null);
+      const form = new FormData();
+      form.append("transactions_csv", transactionsFile);
+      form.append("features_csv", featuresFile);
+      form.append("no_tune", "true");
+      // Include selected model from localStorage (set by Settings page)
+      form.append('model', selectedModel);
+      const res = await fetch("/api/train", { method: "POST", body: form });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setMetrics(data.metrics);
+      const modelLabel = selectedModel === 'svm' ? 'SVM' : selectedModel === 'random_forest' ? 'Random Forest' : selectedModel === 'neural_network' ? 'Neural Network' : 'XGBoost';
+      toast({ title: "Training completed", description: `${modelLabel} metrics updated.` });
+    } catch (err: any) {
+      toast({ title: "Training failed", description: String(err), variant: "destructive" });
+    } finally {
+      setPreprocessing(false);
+    }
+  };
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -126,7 +177,7 @@ const UploadData = () => {
             <input
               type="file"
               accept=".csv"
-              onChange={handleFileInput}
+              onChange={handleFileInputTx}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
             
@@ -136,8 +187,8 @@ const UploadData = () => {
               </div>
               
               <div>
-                <p className="text-lg font-medium">Drop your CSV file here</p>
-                <p className="text-muted-foreground">or click to browse files</p>
+                <p className="text-lg font-medium">Transactions CSV</p>
+                <p className="text-muted-foreground">Drag & drop or click to upload</p>
               </div>
               
               <div className="flex items-center justify-center gap-4 text-sm text-muted-foreground">
@@ -158,15 +209,45 @@ const UploadData = () => {
             </div>
           )}
 
-          {uploadedFile && !uploading && (
+          {transactionsFile && !uploading && (
             <div className="mt-4 p-4 bg-muted/30 rounded-lg">
               <div className="flex items-center gap-3">
                 <FileText className="w-5 h-5 text-primary" />
                 <div className="flex-1">
-                  <p className="font-medium">{uploadedFile.name}</p>
+                  <p className="font-medium">{transactionsFile.name}</p>
                   <p className="text-sm text-muted-foreground">
-                    {(uploadedFile.size / (1024 * 1024)).toFixed(2)} MB
+                    {(transactionsFile.size / (1024 * 1024)).toFixed(2)} MB
                   </p>
+                </div>
+                <Badge variant="outline" className="text-success border-success">
+                  <CheckCircle className="w-3 h-3 mr-1" />
+                  Uploaded
+                </Badge>
+              </div>
+            </div>
+          )}
+
+          {/* Features file uploader */}
+          <div className="mt-6 relative border-2 border-dashed rounded-lg p-6 text-center transition-all duration-200 border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30">
+            <input type="file" accept=".csv" onChange={handleFileInputFeat} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+            <div className="space-y-3">
+              <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center">
+                <Upload className="w-6 h-6 text-primary" />
+              </div>
+              <div>
+                <p className="text-lg font-medium">Features CSV</p>
+                <p className="text-muted-foreground">Drag & drop or click to upload</p>
+              </div>
+            </div>
+          </div>
+
+          {featuresFile && !uploading && (
+            <div className="mt-4 p-4 bg-muted/30 rounded-lg">
+              <div className="flex items-center gap-3">
+                <FileText className="w-5 h-5 text-primary" />
+                <div className="flex-1">
+                  <p className="font-medium">{featuresFile.name}</p>
+                  <p className="text-sm text-muted-foreground">{(featuresFile.size / (1024 * 1024)).toFixed(2)} MB</p>
                 </div>
                 <Badge variant="outline" className="text-success border-success">
                   <CheckCircle className="w-3 h-3 mr-1" />
@@ -219,59 +300,77 @@ const UploadData = () => {
                 Showing 5 of 10,000 rows
               </div>
               
-              <Button
-                onClick={handlePreprocess}
-                disabled={preprocessing}
-                className="bg-gradient-primary"
-              >
-                {preprocessing ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin mr-2" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4 mr-2" />
-                    Start Preprocessing
-                  </>
-                )}
-              </Button>
+              <div className="flex gap-2">
+                <Button onClick={handlePreprocess} disabled={preprocessing} variant="outline">
+                  {preprocessing ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-primary/20 border-t-primary rounded-full animate-spin mr-2" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 mr-2" />
+                      Preprocess
+                    </>
+                  )}
+                </Button>
+                <Button onClick={handleTrain} disabled={preprocessing || !transactionsFile || !featuresFile} className="bg-gradient-primary">
+                  {selectedModel === 'svm' ? 'Train SVM' : selectedModel === 'random_forest' ? 'Train Random Forest' : selectedModel === 'neural_network' ? 'Train Neural Network' : 'Train XGBoost'}
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
       )}
 
       {/* Processing Status */}
-      {preprocessing && (
+      {(preprocessing || metrics) && (
         <Card className="bg-gradient-card border-0 shadow-card">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
-              Preprocessing Pipeline
+              {metrics ? 'Training Results' : 'Preprocessing Pipeline'}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {[
-                { step: "Data validation", status: "completed" },
-                { step: "Feature engineering", status: "processing" },
-                { step: "SMOTE balancing", status: "pending" },
-                { step: "Feature scaling", status: "pending" },
-              ].map((item, index) => (
-                <div key={index} className="flex items-center gap-3">
-                  {item.status === "completed" ? (
-                    <CheckCircle className="w-4 h-4 text-success" />
-                  ) : item.status === "processing" ? (
-                    <div className="w-4 h-4 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
-                  ) : (
-                    <div className="w-4 h-4 border-2 border-muted rounded-full" />
-                  )}
-                  <span className={item.status === "completed" ? "text-success" : "text-muted-foreground"}>
-                    {item.step}
-                  </span>
-                </div>
-              ))}
-            </div>
+            {!metrics ? (
+              <div className="space-y-3">
+                {[
+                  { step: "Data validation", status: "completed" },
+                  { step: "Feature engineering", status: "processing" },
+                  { step: "SMOTE balancing", status: "pending" },
+                  { step: "Feature scaling", status: "pending" },
+                ].map((item, index) => (
+                  <div key={index} className="flex items-center gap-3">
+                    {item.status === "completed" ? (
+                      <CheckCircle className="w-4 h-4 text-success" />
+                    ) : item.status === "processing" ? (
+                      <div className="w-4 h-4 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
+                    ) : (
+                      <div className="w-4 h-4 border-2 border-muted rounded-full" />
+                    )}
+                    <span className={item.status === "completed" ? "text-success" : "text-muted-foreground"}>
+                      {item.step}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {Object.entries(metrics).filter(([k]) => !['report','best_params'].includes(k)).map(([k, v]) => (
+                  <div key={k} className="p-3 rounded-lg bg-muted/20 border">
+                    <div className="text-xs text-muted-foreground">{k}</div>
+                    <div className="text-lg font-bold">{typeof v === 'number' ? (v as number).toFixed(4) : String(v)}</div>
+                  </div>
+                ))}
+                {metrics.report && (
+                  <div className="md:col-span-3 p-3 rounded-lg bg-muted/20 border">
+                    <div className="text-xs text-muted-foreground mb-2">classification report</div>
+                    <pre className="text-xs whitespace-pre-wrap">{metrics.report}</pre>
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

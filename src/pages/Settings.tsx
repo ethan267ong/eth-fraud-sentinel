@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -7,41 +7,76 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { Settings as SettingsIcon, Brain, RefreshCw, Database, Zap, Shield } from "lucide-react";
 
+interface ModelMetrics {
+  accuracy: number;
+  precision: number;
+  recall: number;
+  f1: number;
+  roc_auc: number;
+  pr_auc: number;
+  timestamp: string;
+}
+
 const Settings = () => {
   const { toast } = useToast();
-  const [selectedModel, setSelectedModel] = useState("xgboost");
+  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem('selectedModel') || "xgboost");
   const [continuousLearning, setContinuousLearning] = useState(true);
   const [syntheticDataGen, setSyntheticDataGen] = useState(false);
   const [retraining, setRetraining] = useState(false);
   const [autoRebalancing, setAutoRebalancing] = useState(true);
+  const [modelMetrics, setModelMetrics] = useState<Record<string, ModelMetrics>>({});
+
+  const fetchModelMetrics = async () => {
+    try {
+      const response = await fetch('/api/models/metrics');
+      const data = await response.json();
+      if (data.ok) {
+        setModelMetrics(data.models);
+      }
+    } catch (error) {
+      console.error('Failed to fetch model metrics:', error);
+    }
+  };
+
+  useEffect(() => {
+    fetchModelMetrics();
+  }, []);
+
+  const getModelPerformance = (modelValue: string): string => {
+    const metrics = modelMetrics[modelValue];
+    if (metrics && metrics.accuracy > 0) {
+      return `${(metrics.accuracy * 100).toFixed(1)}%`;
+    }
+    return "Not trained";
+  };
 
   const modelOptions = [
     { 
       value: "xgboost", 
       label: "XGBoost", 
       description: "Gradient boosting with high accuracy",
-      performance: "97%",
+      performance: getModelPerformance("xgboost"),
       status: "active"
     },
     { 
       value: "svm", 
       label: "Support Vector Machine", 
       description: "Classical ML with good interpretability",
-      performance: "89%",
+      performance: getModelPerformance("svm"),
       status: "available"
     },
     { 
       value: "random_forest", 
       label: "Random Forest", 
       description: "Ensemble method with feature importance",
-      performance: "91%",
+      performance: getModelPerformance("random_forest"),
       status: "available"
     },
     { 
       value: "neural_network", 
       label: "Neural Network", 
       description: "Deep learning for complex patterns",
-      performance: "94%",
+      performance: getModelPerformance("neural_network"),
       status: "training"
     }
   ];
@@ -60,6 +95,13 @@ const Settings = () => {
 
   const handleModelChange = (value: string) => {
     setSelectedModel(value);
+    try {
+      localStorage.setItem('selectedModel', value);
+    } catch {}
+    
+    // Refresh metrics after model change
+    fetchModelMetrics();
+    
     toast({
       title: "Model updated",
       description: `Switched to ${modelOptions.find(m => m.value === value)?.label}`,
@@ -94,45 +136,53 @@ const Settings = () => {
                   <SelectValue placeholder="Select a model" />
                 </SelectTrigger>
                 <SelectContent>
-                  {modelOptions.map((model) => (
+                  {modelOptions.map((model) => {
+                    const isActive = selectedModel === model.value;
+                    const statusLabel = isActive ? 'active' : 'available';
+                    return (
                     <SelectItem key={model.value} value={model.value}>
                       <div className="flex items-center justify-between w-full">
                         <span>{model.label}</span>
                         <Badge 
-                          variant={model.status === "active" ? "default" : "outline"}
+                          variant={isActive ? "default" : "outline"}
                           className="ml-2"
                         >
-                          {model.status}
+                          {statusLabel}
                         </Badge>
                       </div>
                     </SelectItem>
-                  ))}
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>
 
             {/* Model Performance Overview */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {modelOptions.map((model) => (
+              {modelOptions.map((model) => {
+                const isActive = selectedModel === model.value;
+                const statusLabel = isActive ? 'active' : 'available';
+                return (
                 <div 
                   key={model.value}
                   className={`p-3 rounded-lg border transition-all ${
-                    selectedModel === model.value 
+                    isActive 
                       ? 'border-primary bg-primary/5' 
                       : 'border-muted bg-muted/20'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-1">
                     <h4 className="font-medium text-sm">{model.label}</h4>
-                    <Badge variant={model.status === "active" ? "default" : "outline"} className="text-xs">
-                      {model.status}
+                    <Badge variant={isActive ? "default" : "outline"} className="text-xs">
+                      {statusLabel}
                     </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground mb-2">{model.description}</p>
                   <div className="text-lg font-bold text-primary">{model.performance}</div>
                   <div className="text-xs text-muted-foreground">Accuracy</div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </CardContent>

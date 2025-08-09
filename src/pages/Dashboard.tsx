@@ -1,28 +1,99 @@
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, PieChart, Pie, Cell } from "recharts";
 import { TrendingUp, TrendingDown, Shield, Database, AlertTriangle, CheckCircle } from "lucide-react";
 
+type FeatureImportance = { feature: string; importance: number };
+type Metrics = {
+  accuracy?: number;
+  precision?: number;
+  recall?: number;
+  f1?: number;
+  roc_auc?: number;
+  pr_auc?: number;
+  original_fraud_rate?: number;
+  balanced_fraud_rate?: number;
+  pre_smote_fraud?: number;
+  pre_smote_legit?: number;
+  post_smote_fraud?: number;
+  post_smote_legit?: number;
+  timestamp?: string;
+  feature_importances?: FeatureImportance[];
+};
+
+type HistoryEntry = Metrics & { timestamp?: string };
+
 const Dashboard = () => {
-  // Mock data for charts
-  const classDistributionData = [
-    { name: 'Before SMOTE', fraud: 850, legitimate: 9150 },
-    { name: 'After SMOTE', fraud: 5000, legitimate: 5000 },
-  ];
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [activity, setActivity] = useState<{ address: string; status: 'fraud'|'legitimate'; confidence: number; time: string }[]>([]);
 
-  const performanceOverTime = [
-    { month: 'Jan', rocAuc: 0.92, prAuc: 0.88 },
-    { month: 'Feb', rocAuc: 0.94, prAuc: 0.90 },
-    { month: 'Mar', rocAuc: 0.93, prAuc: 0.89 },
-    { month: 'Apr', rocAuc: 0.95, prAuc: 0.92 },
-    { month: 'May', rocAuc: 0.96, prAuc: 0.94 },
-    { month: 'Jun', rocAuc: 0.97, prAuc: 0.95 },
-  ];
+  useEffect(() => {
+    const fetchMetrics = async () => {
+      try {
+        const res = await fetch('/api/metrics');
+        const data = await res.json();
+        setMetrics(data.metrics || null);
+      } catch (e) {
+        // ignore; stays mocked
+      }
+    };
+    const fetchHistory = async () => {
+      try {
+        const res = await fetch('/api/metrics/history');
+        const data = await res.json();
+        setHistory(Array.isArray(data.history) ? data.history : []);
+      } catch (e) {
+        // ignore
+      }
+    };
+    const fetchActivity = async () => {
+      try {
+        const res = await fetch('/api/activity');
+        const data = await res.json();
+        setActivity(Array.isArray(data.events) ? data.events : []);
+      } catch (e) {
+        // ignore
+      }
+    };
+    fetchMetrics();
+    fetchHistory();
+    fetchActivity();
+  }, []);
 
-  const fraudDistribution = [
-    { name: 'Legitimate', value: 92.3, color: 'hsl(var(--success))' },
-    { name: 'Fraudulent', value: 7.7, color: 'hsl(var(--destructive))' }
-  ];
+  // Chart data derived from metrics when available (no hard-coded defaults)
+  const originalRate = typeof metrics?.original_fraud_rate === 'number' ? metrics.original_fraud_rate : null;
+  const balancedRate = typeof metrics?.balanced_fraud_rate === 'number' ? metrics.balanced_fraud_rate : null;
+  const classDistributionData = metrics &&
+    typeof metrics.pre_smote_fraud === 'number' &&
+    typeof metrics.pre_smote_legit === 'number' &&
+    typeof metrics.post_smote_fraud === 'number' &&
+    typeof metrics.post_smote_legit === 'number'
+      ? [
+          { name: 'Before SMOTE', fraud: metrics.pre_smote_fraud, legitimate: metrics.pre_smote_legit },
+          { name: 'After SMOTE', fraud: metrics.post_smote_fraud, legitimate: metrics.post_smote_legit },
+        ]
+      : [];
+
+  const performanceOverTime = history.length > 0
+    ? history.map((h, idx) => ({
+        label: h.timestamp ? new Date(h.timestamp).toLocaleString() : `Run ${idx + 1}`,
+        roc_auc: typeof h.roc_auc === 'number' ? h.roc_auc : null,
+        pr_auc: typeof h.pr_auc === 'number' ? h.pr_auc : null,
+      }))
+    : [];
+
+  const fraudDistribution = originalRate !== null && originalRate !== undefined
+    ? [
+        { name: 'Legitimate', value: Number(((1 - originalRate) * 100).toFixed(1)), color: 'hsl(var(--success))' },
+        { name: 'Fraudulent', value: Number((originalRate * 100).toFixed(1)), color: 'hsl(var(--destructive))' }
+      ]
+    : [];
+
+  const accuracyPct = metrics?.accuracy != null ? (metrics.accuracy * 100).toFixed(1) + '%' : '—';
+  const precisionVal = metrics?.precision != null ? metrics.precision.toFixed(2) : '—';
+  const f1Val = metrics?.f1 != null ? metrics.f1.toFixed(2) : '—';
 
   return (
     <div className="p-6 space-y-6">
@@ -48,7 +119,7 @@ const Dashboard = () => {
             <Shield className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-primary">96.7%</div>
+            <div className="text-2xl font-bold text-primary">{accuracyPct}</div>
             <p className="text-xs text-success flex items-center mt-1">
               <TrendingUp className="w-3 h-3 mr-1" />
               +2.3% from last month
@@ -62,7 +133,7 @@ const Dashboard = () => {
             <AlertTriangle className="h-4 w-4 text-accent" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-accent">0.94</div>
+            <div className="text-2xl font-bold text-accent">{precisionVal}</div>
             <p className="text-xs text-success flex items-center mt-1">
               <TrendingUp className="w-3 h-3 mr-1" />
               +0.02 improvement
@@ -76,7 +147,7 @@ const Dashboard = () => {
             <TrendingUp className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-success">0.91</div>
+            <div className="text-2xl font-bold text-success">{f1Val}</div>
             <p className="text-xs text-success flex items-center mt-1">
               <TrendingUp className="w-3 h-3 mr-1" />
               Stable performance
@@ -109,6 +180,11 @@ const Dashboard = () => {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
+              {classDistributionData.length === 0 ? (
+                <div className="h-[300px] flex items-center justify-center text-sm text-muted-foreground">
+                  No data available. Train a model to populate class distribution.
+                </div>
+              ) : (
               <BarChart data={classDistributionData}>
                 <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
                 <XAxis dataKey="name" />
@@ -117,6 +193,7 @@ const Dashboard = () => {
                 <Bar dataKey="fraud" fill="hsl(var(--destructive))" name="Fraudulent" />
                 <Bar dataKey="legitimate" fill="hsl(var(--success))" name="Legitimate" />
               </BarChart>
+              )}
             </ResponsiveContainer>
           </CardContent>
         </Card>
@@ -129,26 +206,32 @@ const Dashboard = () => {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
+              {performanceOverTime.length === 0 ? (
+                <div className="h-[300px] flex items-center justify-center text-sm text-muted-foreground">
+                  No performance history yet.
+                </div>
+              ) : (
               <LineChart data={performanceOverTime}>
                 <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                <XAxis dataKey="month" />
+                <XAxis dataKey="label" />
                 <YAxis domain={[0.8, 1]} />
                 <Tooltip />
                 <Line 
                   type="monotone" 
-                  dataKey="rocAuc" 
+                  dataKey="roc_auc" 
                   stroke="hsl(var(--primary))" 
                   strokeWidth={2}
                   name="ROC-AUC"
                 />
                 <Line 
                   type="monotone" 
-                  dataKey="prAuc" 
+                  dataKey="pr_auc" 
                   stroke="hsl(var(--accent))" 
                   strokeWidth={2}
                   name="PR-AUC"
                 />
               </LineChart>
+              )}
             </ResponsiveContainer>
           </CardContent>
         </Card>
@@ -164,6 +247,11 @@ const Dashboard = () => {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={200}>
+              {fraudDistribution.length === 0 ? (
+                <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">
+                  No distribution data.
+                </div>
+              ) : (
               <PieChart>
                 <Pie
                   data={fraudDistribution}
@@ -179,6 +267,7 @@ const Dashboard = () => {
                 </Pie>
                 <Tooltip />
               </PieChart>
+              )}
             </ResponsiveContainer>
           </CardContent>
         </Card>
@@ -189,28 +278,27 @@ const Dashboard = () => {
             <CardTitle>Recent Activity</CardTitle>
             <CardDescription>Latest fraud detection events</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {[
-                { address: "0x742d35cc62", status: "fraud", confidence: 0.92, time: "2 min ago" },
-                { address: "0x891f5b1a8c", status: "legitimate", confidence: 0.98, time: "5 min ago" },
-                { address: "0x3c4e8f9d12", status: "fraud", confidence: 0.87, time: "8 min ago" },
-                { address: "0x567a2b9e45", status: "legitimate", confidence: 0.95, time: "12 min ago" },
-              ].map((item, index) => (
-                <div key={index} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-2 h-2 rounded-full ${item.status === 'fraud' ? 'bg-destructive' : 'bg-success'}`} />
-                    <span className="font-mono text-sm">{item.address}...</span>
+          <CardContent className="h-80">
+            <div className="h-full overflow-auto space-y-4 pr-2">
+              {activity.length === 0 ? (
+                <div className="text-sm text-muted-foreground text-center py-6">No recent activity.</div>
+              ) : (
+                activity.map((item, index) => (
+                  <div key={index} className="flex items-center justify-between p-3 rounded-lg bg-muted/30">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-2 h-2 rounded-full ${item.status === 'fraud' ? 'bg-destructive' : 'bg-success'}`} />
+                      <span className="font-mono text-sm">{item.address}...</span>
+                    </div>
+                    <div className="flex items-center gap-4 text-sm">
+                      <span className={item.status === 'fraud' ? 'text-destructive' : 'text-success'}>
+                        {item.status === 'fraud' ? 'Fraudulent' : 'Legitimate'}
+                      </span>
+                      <span className="text-muted-foreground">{(item.confidence * 100).toFixed(0)}%</span>
+                      <span className="text-xs text-muted-foreground">{item.time}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-4 text-sm">
-                    <span className={item.status === 'fraud' ? 'text-destructive' : 'text-success'}>
-                      {item.status === 'fraud' ? 'Fraudulent' : 'Legitimate'}
-                    </span>
-                    <span className="text-muted-foreground">{(item.confidence * 100).toFixed(0)}%</span>
-                    <span className="text-xs text-muted-foreground">{item.time}</span>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </CardContent>
         </Card>
